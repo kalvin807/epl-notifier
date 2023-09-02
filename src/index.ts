@@ -162,7 +162,7 @@ export default {
 			if (!match || !match.dateTime) return false;
 			const now = new Date();
 			const diff = match.dateTime.getTime() - now.getTime();
-			return diff > 0 && diff < 60 * 60 * 1000;
+			return diff > 0 && diff < 31 * 60 * 1000;
 		});
 
 		const nextMatch = filteredMatches[0];
