@@ -171,7 +171,14 @@ async function run(): Promise<void> {
 
 export default {
 	async fetch(_request: Request) {
-		return await run();
+		try {
+			await run();
+
+			return new Response('ok');
+		} catch (e) {
+			console.error(e);
+			return new Response(`error ${e}`, { status: 500 });
+		}
 	},
 	async scheduled(ctx: ExecutionContext) {
 		return ctx.waitUntil(run());
