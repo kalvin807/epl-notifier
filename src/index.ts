@@ -121,53 +121,59 @@ async function triggerDiscordWebhook(nextMatch: Match, allMatches: Match[]) {
 const userAgent =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36';
 
+async function run(): Promise<void> {
+	const response = await fetch('https://soccer.yahoo.co.jp/ws/category/eng/schedule/', {
+		headers: {
+			'user-agent': userAgent,
+			'accept': 'text/html',
+		},
+	});
+	const htmlString = await response.text();
+	const $ = cheerio.load(htmlString);
+	const currentMatchesTable = $('table.sc-tableGame tbody tr');
+	const currentMatchesArray = currentMatchesTable.toArray();
+
+	// filter away tr with style display: table-column;
+	const filteredMatchesArray = currentMatchesArray.filter(match => {
+		const style = $(match).attr('style');
+		return !style || !style.includes('display: table-column;');
+	});
+
+	const matches = filteredMatchesArray
+		.map(element => {
+			const dateElement = $(element).find('.sc-tableGame__data--date');
+			const datetimeStr = dateElement.text().replace(/\s/g, '').trim();
+			const teamElements = $(element).find('.sc-tableGame__team span');
+			const [homeTeam, awayTeam] = $(teamElements).text().trim().split(/\s+/);
+			if (!homeTeam || !awayTeam) return;
+			return new Match(homeTeam, awayTeam, datetimeStr);
+		})
+		.reduce((acc, match) => {
+			if (!match) return acc;
+			acc.push(match);
+			return acc;
+		}, [] as Match[]);
+
+	if (!matches) return;
+
+	// filter matches that is starting in 5 minutes
+	const filteredMatches = matches.filter(match => {
+		if (!match || !match.dateTime) return false;
+		const now = new Date();
+		const diff = match.dateTime.getTime() - now.getTime();
+		return diff > 0 && diff < 31 * 60 * 1000;
+	});
+
+	const nextMatch = filteredMatches[0];
+	if (!nextMatch) return;
+	triggerDiscordWebhook(nextMatch, matches);
+}
+
 export default {
-	async fetch(request: Request) {
-		const response = await fetch('https://soccer.yahoo.co.jp/ws/category/eng/schedule/', {
-			headers: {
-				'user-agent': userAgent,
-				'accept': 'text/html',
-			},
-		});
-		const htmlString = await response.text();
-		const $ = cheerio.load(htmlString);
-		const currentMatchesTable = $('table.sc-tableGame tbody tr');
-		const currentMatchesArray = currentMatchesTable.toArray();
-
-		// filter away tr with style display: table-column;
-		const filteredMatchesArray = currentMatchesArray.filter(match => {
-			const style = $(match).attr('style');
-			return !style || !style.includes('display: table-column;');
-		});
-
-		const matches = filteredMatchesArray
-			.map(element => {
-				const dateElement = $(element).find('.sc-tableGame__data--date');
-				const datetimeStr = dateElement.text().replace(/\s/g, '').trim();
-				const teamElements = $(element).find('.sc-tableGame__team span');
-				const [homeTeam, awayTeam] = $(teamElements).text().trim().split(/\s+/);
-				if (!homeTeam || !awayTeam) return;
-				return new Match(homeTeam, awayTeam, datetimeStr);
-			})
-			.reduce((acc, match) => {
-				if (!match) return acc;
-				acc.push(match);
-				return acc;
-			}, [] as Match[]);
-
-		if (!matches) return new Response('No upcoming matches');
-
-		// filter matches that is starting in 5 minutes
-		const filteredMatches = matches.filter(match => {
-			if (!match || !match.dateTime) return false;
-			const now = new Date();
-			const diff = match.dateTime.getTime() - now.getTime();
-			return diff > 0 && diff < 31 * 60 * 1000;
-		});
-
-		const nextMatch = filteredMatches[0];
-		if (!nextMatch) return new Response('No upcoming matches');
-		await triggerDiscordWebhook(nextMatch, matches);
-		return new Response(`request method: ${request.method}`);
+	async fetch(_request: Request) {
+		return await run();
+	},
+	async scheduled(ctx: ExecutionContext) {
+		return ctx.waitUntil(run());
 	},
 };
