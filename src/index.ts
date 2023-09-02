@@ -173,14 +173,13 @@ export default {
 	async fetch(_request: Request) {
 		try {
 			await run();
-
 			return new Response('ok');
 		} catch (e) {
 			console.error(e);
 			return new Response(`error ${e}`, { status: 500 });
 		}
 	},
-	async scheduled(ctx: ExecutionContext) {
+	async scheduled(_event: unknown, _env: unknown, ctx: ExecutionContext) {
 		return ctx.waitUntil(run());
 	},
 };
