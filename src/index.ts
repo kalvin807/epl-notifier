@@ -1,7 +1,7 @@
 import { ExecutionContext } from '@cloudflare/workers-types/experimental';
 import * as cheerio from 'cheerio';
 import { DateTime } from 'luxon';
-import { userAgent } from './utils';
+import { convertTeamNameToZh, userAgent } from './utils';
 import { Schedule } from './schedule';
 import { Standing } from './standing';
 import { triggerDiscordWebhook } from './webhook';
@@ -43,6 +43,13 @@ async function getSchedule(): Promise<Schedule[]> {
 	});
 }
 
+function buildNextMatchMessage(nextMatch: Schedule): string {
+	const { homeTeam, awayTeam, dateTime } = nextMatch;
+	if (!dateTime) return '';
+	// convert JST to HKT
+	return `Next match: ${homeTeam} vs ${awayTeam} at ${dateTime.toFormat('MM/dd HH:mm')}`;
+}
+
 async function triggerNextMatchMessage(env: Env): Promise<void> {
 	const schedules = await getSchedule();
 	if (!schedules) return;
@@ -59,8 +66,33 @@ async function triggerNextMatchMessage(env: Env): Promise<void> {
 		return;
 	}
 	console.log('next match', nextMatch.toJson());
+	const fields = schedules
+		.toSorted((a, b) => {
+			if (!a.dateTime || !b.dateTime) return 0;
+			return a.dateTime.millisecond - b.dateTime.millisecond;
+		})
+		.map(s => {
+			const { homeTeam, awayTeam, dateTime } = s;
+			if (!dateTime) return;
+			return {
+				name: `${convertTeamNameToZh(homeTeam)} vs ${convertTeamNameToZh(awayTeam)}`,
+				value: dateTime.toFormat('MM/dd HH:mm'),
+				inline: false,
+			};
+		});
 
-	await triggerDiscordWebhook(env.DISCORD_WEBHOOK_URL, nextMatch, schedules);
+	const payload = {
+		message: buildNextMatchMessage(nextMatch),
+		embeds: [
+			{
+				title: 'Upcoming matches',
+				color: 0x0099ff,
+				fields,
+			},
+		],
+	};
+
+	await triggerDiscordWebhook(env.DISCORD_WEBHOOK_URL, payload);
 }
 
 async function getScheduleResp(): Promise<Response> {
@@ -99,7 +131,7 @@ async function getStandingResp(): Promise<Response> {
 	return new Response(
 		JSON.stringify({
 			standing: rows.map(row => row.toJson()),
-			updatedAt: updatedAtDate,
+			updatedAt: updatedAtDate.setZone('Asia/Hong_Kong').toLocaleString(),
 		})
 	);
 }

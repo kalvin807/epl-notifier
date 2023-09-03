@@ -88,5 +88,5 @@ export function parseNonStandardDateTime(dateString: string): DateTime | null {
 		dt = dt.set({ hour: hours, minute: minutes });
 	}
 
-	return dt;
+	return dt.setZone('Asia/Hong_Kong');
 }
