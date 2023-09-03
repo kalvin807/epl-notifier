@@ -1,17 +1,5 @@
-# Template: worker
+# EPL data worker
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/worker)
+> Thanks maintainer at yahoo japan for all the effort <3
 
-A simple template for kick starting a Cloudflare worker project.
-
-## Setup
-
-To create a `my-project` directory using this template, run:
-
-```sh
-$ npx wrangler generate my-project worker
-# or
-$ yarn wrangler generate my-project worker
-# or
-$ pnpm wrangler generate my-project worker
-```
+Scrape https://soccer.yahoo.co.jp/ for various data for EPL to power my discord bot
