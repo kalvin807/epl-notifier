@@ -171,9 +171,9 @@ export interface Env {
 }
 
 export default {
-	async fetch(_request: Request, env: Env) {
+	async fetch(_request: Request, env: Env, ctx: ExecutionContext) {
 		try {
-			await run(env);
+			ctx.waitUntil(run(env));
 			return new Response('ok');
 		} catch (e) {
 			console.error(e);
