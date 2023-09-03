@@ -80,10 +80,7 @@ function buildNextMatchMessage(nextMatch: Match): string {
 	)} at ${dateTimeHKT.toLocaleString()}`;
 }
 
-async function triggerDiscordWebhook(nextMatch: Match, allMatches: Match[]) {
-	const webhookUrl =
-		'https://discord.com/api/webhooks/1147547497439432837/X_LGx9ViisK7Mt9Xzzr2p0R8pLJTlk1eEIqEnIAHq9hQK28VADMzs998W2fVoLBR9YbO';
-
+async function triggerDiscordWebhook(webhookUrl: string, nextMatch: Match, allMatches: Match[]) {
 	const fields = allMatches
 		.toSorted((a, b) => {
 			if (!a.dateTime || !b.dateTime) return 0;
@@ -121,7 +118,7 @@ async function triggerDiscordWebhook(nextMatch: Match, allMatches: Match[]) {
 const userAgent =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36';
 
-async function run(): Promise<void> {
+async function run(env: Env): Promise<void> {
 	const response = await fetch('https://soccer.yahoo.co.jp/ws/category/eng/schedule/', {
 		headers: {
 			'user-agent': userAgent,
@@ -166,20 +163,24 @@ async function run(): Promise<void> {
 
 	const nextMatch = filteredMatches[0];
 	if (!nextMatch) return;
-	triggerDiscordWebhook(nextMatch, matches);
+	triggerDiscordWebhook(env.DISCORD_WEBHOOK_URL, nextMatch, matches);
+}
+
+export interface Env {
+	DISCORD_WEBHOOK_URL: string;
 }
 
 export default {
-	async fetch(_request: Request) {
+	async fetch(_request: Request, env: Env) {
 		try {
-			await run();
+			await run(env);
 			return new Response('ok');
 		} catch (e) {
 			console.error(e);
 			return new Response(`error ${e}`, { status: 500 });
 		}
 	},
-	async scheduled(_event: unknown, _env: unknown, ctx: ExecutionContext) {
-		return ctx.waitUntil(run());
+	async scheduled(_event: unknown, env: Env, ctx: ExecutionContext) {
+		return ctx.waitUntil(run(env));
 	},
 };
