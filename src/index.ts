@@ -62,7 +62,7 @@ function buildNextMatchMessage(nextMatches: Schedule[]): string {
 	if (!dateTime) return nextMatchMsg; // should not happen
 
 	const timeDiffFromNowInMinute = dateTime.diffNow('minutes').minutes;
-	const message = `${timeDiffFromNowInMinute}m 後: ${nextMatchMsg}`;
+	const message = `${Math.round(timeDiffFromNowInMinute)}m 後: ${nextMatchMsg}`;
 
 	return message;
 }
@@ -84,7 +84,7 @@ async function triggerNextMatchMessage(env: Env): Promise<void> {
 	}
 
 	const payload = {
-		message: buildNextMatchMessage(nextMatches),
+		content: buildNextMatchMessage(nextMatches),
 		embeds: [
 			{
 				title: '今期賽事',
@@ -145,9 +145,15 @@ async function getStandingResp(): Promise<Response> {
 
 async function route(path: string, env: Env, _ctx: ExecutionContext): Promise<Response> {
 	switch (path) {
-		case '/upnext':
-			await triggerNextMatchMessage(env);
-			return new Response('ok');
+		case '/upnext': {
+			try {
+				await triggerNextMatchMessage(env);
+				return new Response('ok');
+			} catch (e) {
+				console.error(e);
+				return new Response(`error ${e}`, { status: 500 });
+			}
+		}
 		case '/schedule':
 			return await getScheduleResp(env);
 		case '/standing':

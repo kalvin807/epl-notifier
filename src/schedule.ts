@@ -31,8 +31,8 @@ export class Schedule {
 		const data = cheerio.load(selector)('td');
 		const dateTimeStr = data.eq(0).text().trim();
 		this.dateTime = parseNonStandardDateTime(dateTimeStr);
-		this.homeTeam = data.eq(2).text().trim();
-		this.awayTeam = data.eq(4).text().trim();
+		this.homeTeam = convertTeamNameToZh(data.eq(2).text().trim());
+		this.awayTeam = convertTeamNameToZh(data.eq(4).text().trim());
 		this.score = this.extractStatus(data.eq(3));
 	}
 
@@ -44,13 +44,14 @@ export class Schedule {
 
 	toJson(): Record<string, string | number | null | undefined> {
 		return {
-			homeTeam: convertTeamNameToZh(this.homeTeam),
-			awayTeam: convertTeamNameToZh(this.awayTeam),
+			homeTeam: this.homeTeam,
+			awayTeam: this.awayTeam,
 			dateTime: this.dateTime?.toJSON(),
 			status: this.score,
 		};
 	}
 
+	/** internal use */
 	setFields(
 		homeTeam: string,
 		awayTeam: string,
