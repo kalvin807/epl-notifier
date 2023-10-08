@@ -1,4 +1,5 @@
 import { DateTime, Duration } from 'luxon';
+import { Schedule } from './schedule';
 
 const teamJaZhMap = {
 	'ルートンタウン': '盧頓',
@@ -30,16 +31,7 @@ export function convertTeamNameToZh(teamName: string): string {
 	return teamJaZhMap[teamName] || teamName;
 }
 
-export function convertTZ(date: Date, tzString: string) {
-	return new Date(
-		date.toLocaleString('en-US', {
-			timeZone: tzString,
-		})
-	);
-}
-
 export function parseNonStandardDateTime(dateString: string): DateTime | null {
-	// Assume current year
 	// Assume current year
 	const currentYear = DateTime.now().year;
 
@@ -50,14 +42,12 @@ export function parseNonStandardDateTime(dateString: string): DateTime | null {
 		.filter(Boolean);
 
 	if (parts.length !== 2) {
-		console.error(`Failed parts.length !== 2 ${parts}`);
 		return null;
 	}
 
 	const [date, time] = parts;
 
 	if (!date || !time) {
-		console.error(`Failed !date || !time from ${parts}`);
 		return null;
 	}
 
@@ -67,13 +57,15 @@ export function parseNonStandardDateTime(dateString: string): DateTime | null {
 	const timeParts = time.split(':').map(str => Number(str.trim()));
 
 	if (timeParts.length !== 2 || timeParts.some(isNaN)) {
-		console.error(`Failed isNaN(hours) || isNaN(minutes) from ${time}`);
 		return null;
 	}
 
 	const [hours, minutes] = timeParts;
 
-	let dt = DateTime.fromFormat(fullDateString, 'yyyy/M/d');
+	// it is always in JST
+	let dt = DateTime.fromFormat(fullDateString, 'yyyy/M/d', {
+		zone: 'Asia/Tokyo',
+	});
 
 	// If hours >= 24, add extra days and set the remaining hours
 	if (hours! >= 24) {
@@ -90,3 +82,23 @@ export function parseNonStandardDateTime(dateString: string): DateTime | null {
 
 	return dt.setZone('Asia/Hong_Kong');
 }
+
+/**
+ * `a - b` in minutes round to the nearest integer sync to same timezone
+ */
+export const timeDiffInMinutesTZSafe = (a: DateTime, b: DateTime, tz: string): number => {
+	a = a.setZone(tz);
+	b = b.setZone(tz);
+	const diff = a.diff(b, 'minutes');
+	return Math.round(diff.minutes);
+};
+
+export const sortSchedules = (unsorted: Schedule[]): Schedule[] => {
+	return [...unsorted].sort((a, b) => {
+		if (!(a.dateTime && b.dateTime)) {
+			return 0;
+		}
+		const diffInSeconds = a.dateTime.diff(b.dateTime, 'seconds');
+		return diffInSeconds?.seconds || a.homeTeam.localeCompare(b.homeTeam);
+	});
+};

@@ -19,7 +19,7 @@
 		"noEmit": true,
 		"module": "esnext",
 		"target": "esnext",
-		"lib": ["esnext"],
+		"lib": ["esnext", "DOM"],
 		"moduleResolution": "node",
 		"types": ["@cloudflare/workers-types"]
 	},

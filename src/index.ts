@@ -1,13 +1,23 @@
 import { ExecutionContext } from '@cloudflare/workers-types/experimental';
 import * as cheerio from 'cheerio';
 import { DateTime } from 'luxon';
-import { convertTeamNameToZh, userAgent } from './utils';
-import { Schedule } from './schedule';
+import { sortSchedules, userAgent } from './utils';
+import { Schedule, buildSchedulesAsDiscordEmbed } from './schedule';
 import { Standing } from './standing';
 import { triggerDiscordWebhook } from './webhook';
+import { filterNextMatches } from './next-match';
 
 export interface Env {
 	DISCORD_WEBHOOK_URL: string;
+	NEXT_MATCH_BUFFER_MINUTES: string;
+}
+
+function jsonResponse(jsonString: string): Response {
+	return new Response(jsonString, {
+		headers: {
+			'content-type': 'application/json;charset=UTF-8',
+		},
+	});
 }
 
 async function getSchedule(): Promise<Schedule[]> {
@@ -37,57 +47,49 @@ async function getSchedule(): Promise<Schedule[]> {
 		}
 	});
 
-	return schedules.toSorted((a, b) => {
-		if (!a.dateTime || !b.dateTime) return 0;
-		return a.dateTime.millisecond - b.dateTime.millisecond;
-	});
+	return sortSchedules(schedules);
 }
 
-function buildNextMatchMessage(nextMatch: Schedule): string {
-	const { homeTeam, awayTeam, dateTime } = nextMatch;
-	if (!dateTime) return '';
-	// convert JST to HKT
-	return `Next match: ${homeTeam} vs ${awayTeam} at ${dateTime.toFormat('MM/dd HH:mm')}`;
+function buildNextMatchMessage(nextMatches: Schedule[]): string {
+	if (!nextMatches.length) return '';
+	const nextMatchMsg = nextMatches
+		.map(match => {
+			const { homeTeam, awayTeam } = match;
+			return `主 ${homeTeam} vs ${awayTeam} 客`;
+		})
+		.join(' / ');
+	const dateTime = nextMatches[0]?.dateTime;
+	if (!dateTime) return nextMatchMsg; // should not happen
+
+	const timeDiffFromNowInMinute = dateTime.diffNow('minutes').minutes;
+	const message = `${timeDiffFromNowInMinute}m 後: ${nextMatchMsg}`;
+
+	return message;
 }
 
 async function triggerNextMatchMessage(env: Env): Promise<void> {
+	const bufferInMinutes = parseInt(env.NEXT_MATCH_BUFFER_MINUTES, 10);
+	if (isNaN(bufferInMinutes)) {
+		throw new Error(`Failed to parse NEXT_MATCH_BUFFER_MINUTES ${env.NEXT_MATCH_BUFFER_MINUTES}`);
+	}
+
 	const schedules = await getSchedule();
-	if (!schedules) return;
+	if (!schedules) {
+		throw new Error('Failed to parse matches');
+	}
 
-	const nextMatch = schedules.find(match => {
-		if (!match || !match.dateTime) return false;
-		const now = new Date();
-		const diff = match.dateTime.toMillis() - now.getTime();
-		return diff > 0 && diff < 31 * 60 * 1000;
-	});
-
-	if (!nextMatch) {
-		console.log('no next match');
+	const nextMatches = filterNextMatches(schedules, bufferInMinutes);
+	if (nextMatches.length === 0) {
 		return;
 	}
-	console.log('next match', nextMatch.toJson());
-	const fields = schedules
-		.toSorted((a, b) => {
-			if (!a.dateTime || !b.dateTime) return 0;
-			return a.dateTime.millisecond - b.dateTime.millisecond;
-		})
-		.map(s => {
-			const { homeTeam, awayTeam, dateTime } = s;
-			if (!dateTime) return;
-			return {
-				name: `${convertTeamNameToZh(homeTeam)} vs ${convertTeamNameToZh(awayTeam)}`,
-				value: dateTime.toFormat('MM/dd HH:mm'),
-				inline: false,
-			};
-		});
 
 	const payload = {
-		message: buildNextMatchMessage(nextMatch),
+		message: buildNextMatchMessage(nextMatches),
 		embeds: [
 			{
-				title: 'Upcoming matches',
+				title: '今期賽事',
 				color: 0x0099ff,
-				fields,
+				fields: buildSchedulesAsDiscordEmbed(schedules),
 			},
 		],
 	};
@@ -95,13 +97,18 @@ async function triggerNextMatchMessage(env: Env): Promise<void> {
 	await triggerDiscordWebhook(env.DISCORD_WEBHOOK_URL, payload);
 }
 
-async function getScheduleResp(): Promise<Response> {
+async function getScheduleResp(env: Env): Promise<Response> {
+	const bufferInMinutes = parseInt(env.NEXT_MATCH_BUFFER_MINUTES, 10);
+	if (isNaN(bufferInMinutes)) {
+		throw new Error(`Failed to parse NEXT_MATCH_BUFFER_MINUTES ${env.NEXT_MATCH_BUFFER_MINUTES}`);
+	}
 	const schedules = await getSchedule();
 	if (!schedules) return new Response('Failed to parse matches');
 
-	return new Response(
+	return jsonResponse(
 		JSON.stringify({
-			schedule: schedules.map(s => s.toJson()),
+			nextMatch: filterNextMatches(schedules, bufferInMinutes),
+			schedule: schedules.map(schedule => schedule.toJson()),
 		})
 	);
 }
@@ -128,7 +135,7 @@ async function getStandingResp(): Promise<Response> {
 	// 2023/9/3 3:35
 	const updatedAtDate = DateTime.fromFormat(updatedAt, 'yyyy/M/d H:mm');
 
-	return new Response(
+	return jsonResponse(
 		JSON.stringify({
 			standing: rows.map(row => row.toJson()),
 			updatedAt: updatedAtDate.setZone('Asia/Hong_Kong').toLocaleString(),
@@ -142,7 +149,7 @@ async function route(path: string, env: Env, _ctx: ExecutionContext): Promise<Re
 			await triggerNextMatchMessage(env);
 			return new Response('ok');
 		case '/schedule':
-			return await getScheduleResp();
+			return await getScheduleResp(env);
 		case '/standing':
 			return await getStandingResp();
 		default:
