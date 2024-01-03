@@ -13,7 +13,7 @@
 		"@types/luxon": "^3.3.2",
 		"typescript": "^5.2.2",
 		"vitest": "^0.34.3",
-		"wrangler": "^3.6.0"
+		"wrangler": "^3.19.0"
 	},
 	"dependencies": {
 		"cheerio": "1.0.0-rc.12",
