@@ -9,14 +9,14 @@
 		"test": "vitest run"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^4.20230821.0",
-		"@types/luxon": "^3.3.2",
-		"typescript": "^5.2.2",
-		"vitest": "^0.34.3",
-		"wrangler": "^3.6.0"
+		"@cloudflare/workers-types": "^4.20240815.0",
+		"@types/luxon": "^3.4.2",
+		"typescript": "^5.5.4",
+		"vitest": "^2.0.5",
+		"wrangler": "^3.72.0"
 	},
 	"dependencies": {
-		"cheerio": "1.0.0-rc.12",
-		"luxon": "^3.4.2"
+		"cheerio": "1.0.0",
+		"luxon": "^3.5.0"
 	}
 }
