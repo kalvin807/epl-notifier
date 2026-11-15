@@ -1,183 +1,116 @@
-import { ExecutionContext } from '@cloudflare/workers-types/experimental';
-import * as cheerio from 'cheerio';
-import { DateTime } from 'luxon';
-import { sortSchedules, userAgent } from './utils';
-import { Schedule, buildSchedulesAsDiscordEmbed } from './schedule';
-import { Standing } from './standing';
-import { triggerDiscordWebhook } from './webhook';
 import { filterNextMatches } from './next-match';
+import { buildUpNextPayload, sendDiscordWebhook } from './discord';
+import { getSchedules, getStandings } from './scrape';
+import { isKnownTeam } from './utils';
+import { errorFields, log } from './log';
 
 export interface Env {
 	DISCORD_WEBHOOK_URL: string;
 	NEXT_MATCH_BUFFER_MINUTES: string;
 }
 
-function jsonResponse(jsonString: string): Response {
-	return new Response(jsonString, {
-		headers: {
-			'content-type': 'application/json;charset=UTF-8',
-		},
+function json(body: unknown, status = 200): Response {
+	return new Response(JSON.stringify(body), {
+		status,
+		headers: { 'content-type': 'application/json;charset=UTF-8' },
 	});
 }
 
-async function getSchedule(): Promise<Schedule[]> {
-	const response = await fetch('https://soccer.yahoo.co.jp/ws/category/eng/schedule/', {
-		headers: {
-			'user-agent': userAgent,
-			'accept': 'text/html',
-		},
-	});
-	const htmlString = await response.text();
-	const $ = cheerio.load(htmlString);
-	const currentMatchesTable = $('table.sc-tableGame tbody tr');
-	const currentMatchesArray = currentMatchesTable.toArray();
-
-	// filter away tr with style display: table-column;
-	const filteredMatchesArray = currentMatchesArray.filter(match => {
-		const style = $(match).attr('style');
-		return !style || !style.includes('display: table-column;');
-	});
-
-	const schedules: Schedule[] = [];
-	filteredMatchesArray.forEach(element => {
-		try {
-			schedules.push(new Schedule(element));
-		} catch (e) {
-			console.error(e);
-		}
-	});
-
-	return sortSchedules(schedules);
-}
-
-function buildNextMatchMessage(nextMatches: Schedule[]): string {
-	if (!nextMatches.length) return '';
-	const nextMatchMsg = nextMatches
-		.map(match => {
-			const { homeTeam, awayTeam } = match;
-			return `主 ${homeTeam} vs ${awayTeam} 客`;
-		})
-		.join(' / ');
-	const dateTime = nextMatches[0]?.dateTime;
-	if (!dateTime) return nextMatchMsg; // should not happen
-
-	const timeDiffFromNowInMinute = dateTime.diffNow('minutes').minutes;
-	const message = `${Math.round(timeDiffFromNowInMinute)}m 後: ${nextMatchMsg}`;
-
-	return message;
-}
-
-async function triggerNextMatchMessage(env: Env): Promise<void> {
-	const bufferInMinutes = parseInt(env.NEXT_MATCH_BUFFER_MINUTES, 10);
-	if (isNaN(bufferInMinutes)) {
-		throw new Error(`Failed to parse NEXT_MATCH_BUFFER_MINUTES ${env.NEXT_MATCH_BUFFER_MINUTES}`);
+function bufferMinutes(env: Env): number {
+	const minutes = parseInt(env.NEXT_MATCH_BUFFER_MINUTES, 10);
+	if (isNaN(minutes) || minutes <= 0) {
+		throw new Error(`Invalid NEXT_MATCH_BUFFER_MINUTES: ${env.NEXT_MATCH_BUFFER_MINUTES}`);
 	}
+	return minutes;
+}
 
-	const schedules = await getSchedule();
-	if (!schedules) {
-		throw new Error('Failed to parse matches');
-	}
-
-	const nextMatches = filterNextMatches(schedules, bufferInMinutes);
-	if (nextMatches.length === 0) {
+/** Posts to Discord when a match kicks off within the buffer window. */
+async function notifyUpNext(env: Env): Promise<void> {
+	const schedules = await getSchedules();
+	const nextMatches = filterNextMatches(schedules, bufferMinutes(env));
+	if (!nextMatches.length) {
+		log('info', 'upnext_skipped', { reason: 'no match within buffer', matches: schedules.length });
 		return;
 	}
+	await sendDiscordWebhook(env.DISCORD_WEBHOOK_URL, buildUpNextPayload(nextMatches, schedules));
+}
 
-	const payload = {
-		content: buildNextMatchMessage(nextMatches),
-		embeds: [
-			{
-				title: '今期賽事',
-				color: 0x0099ff,
-				fields: buildSchedulesAsDiscordEmbed(schedules),
-			},
-		],
+async function scheduleResponse(env: Env): Promise<Response> {
+	const schedules = await getSchedules();
+	return json({
+		nextMatch: filterNextMatches(schedules, bufferMinutes(env)),
+		schedule: schedules.map(schedule => schedule.toJson()),
+	});
+}
+
+async function standingResponse(): Promise<Response> {
+	const { standings, updatedAt } = await getStandings();
+	return json({
+		standing: standings.map(row => row.toJson()),
+		updatedAt: updatedAt?.setZone('Asia/Hong_Kong').toLocaleString() ?? null,
+	});
+}
+
+/** Scrapes both pages and reports whether the output looks sane. 503 when it does not. */
+async function healthResponse(): Promise<Response> {
+	const [schedule, standings] = await Promise.allSettled([getSchedules(), getStandings()]);
+	const teams = standings.status === 'fulfilled' ? standings.value.standings.map(s => s.teamName) : [];
+	const unmappedTeams = teams.filter(team => !isKnownTeam(team));
+	const failure = (r: PromiseSettledResult<unknown>) => (r.status === 'rejected' ? String(r.reason) : null);
+
+	const report = {
+		ok: schedule.status === 'fulfilled' && standings.status === 'fulfilled' && unmappedTeams.length === 0,
+		schedule:
+			schedule.status === 'fulfilled'
+				? { matches: schedule.value.length, undated: schedule.value.filter(s => !s.dateTime).length }
+				: { error: failure(schedule) },
+		standings:
+			standings.status === 'fulfilled'
+				? { rows: standings.value.standings.length, updatedAt: standings.value.updatedAt?.toISO() ?? null }
+				: { error: failure(standings) },
+		unmappedTeams,
+		checkedAt: new Date().toISOString(),
 	};
-
-	await triggerDiscordWebhook(env.DISCORD_WEBHOOK_URL, payload);
+	return json(report, report.ok ? 200 : 503);
 }
 
-async function getScheduleResp(env: Env): Promise<Response> {
-	const bufferInMinutes = parseInt(env.NEXT_MATCH_BUFFER_MINUTES, 10);
-	if (isNaN(bufferInMinutes)) {
-		throw new Error(`Failed to parse NEXT_MATCH_BUFFER_MINUTES ${env.NEXT_MATCH_BUFFER_MINUTES}`);
-	}
-	const schedules = await getSchedule();
-	if (!schedules) return new Response('Failed to parse matches');
-
-	return jsonResponse(
-		JSON.stringify({
-			nextMatch: filterNextMatches(schedules, bufferInMinutes),
-			schedule: schedules.map(schedule => schedule.toJson()),
-		})
-	);
-}
-
-async function getStandingResp(): Promise<Response> {
-	const response = await fetch('https://soccer.yahoo.co.jp/ws/category/eng/standings', {
-		headers: {
-			'user-agent': userAgent,
-			'accept': 'text/html',
-		},
-	});
-	const htmlString = await response.text();
-	const $ = cheerio.load(htmlString);
-	const standingTable = $('div#stand tbody');
-
-	const rows: Standing[] = [];
-
-	standingTable.find('tr').each((_, tr) => {
-		const standing = new Standing(tr);
-		rows.push(standing);
-	});
-
-	const updatedAt = $('time.sc-tableNote__update').text().trim();
-	// 2023/9/3 3:35
-	const updatedAtDate = DateTime.fromFormat(updatedAt, 'yyyy/M/d H:mm');
-
-	return jsonResponse(
-		JSON.stringify({
-			standing: rows.map(row => row.toJson()),
-			updatedAt: updatedAtDate.setZone('Asia/Hong_Kong').toLocaleString(),
-		})
-	);
-}
-
-async function route(path: string, env: Env, _ctx: ExecutionContext): Promise<Response> {
+async function route(path: string, env: Env): Promise<Response> {
 	switch (path) {
-		case '/upnext': {
-			try {
-				await triggerNextMatchMessage(env);
-				return new Response('ok');
-			} catch (e) {
-				console.error(e);
-				return new Response(`error ${e}`, { status: 500 });
-			}
-		}
+		case '/upnext':
+			await notifyUpNext(env);
+			return new Response('ok');
 		case '/schedule':
-			return await getScheduleResp(env);
+			return scheduleResponse(env);
 		case '/standing':
-			return await getStandingResp();
+			return standingResponse();
+		case '/health':
+			return healthResponse();
 		default:
 			return new Response('Not found', { status: 404 });
 	}
 }
 
 export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+	async fetch(request, env) {
 		if (request.method !== 'GET') {
 			return new Response('Not found', { status: 404 });
 		}
-
+		const path = new URL(request.url).pathname;
 		try {
-			const path = new URL(request.url).pathname;
-			return await route(path, env, ctx);
+			return await route(path, env);
 		} catch (e) {
-			console.error(e);
+			log('error', 'request_failed', { path, ...errorFields(e) });
 			return new Response(`error ${e}`, { status: 500 });
 		}
 	},
-	async scheduled(_event: unknown, env: Env, ctx: ExecutionContext) {
-		return ctx.waitUntil(triggerNextMatchMessage(env));
+
+	// Awaited (not waitUntil) so a failure marks the cron invocation as failed in the dashboard.
+	async scheduled(controller, env) {
+		try {
+			await notifyUpNext(env);
+		} catch (e) {
+			log('error', 'cron_failed', { cron: controller.cron, ...errorFields(e) });
+			throw e;
+		}
 	},
-};
+} satisfies ExportedHandler<Env>;

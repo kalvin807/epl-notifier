@@ -1,4 +1,4 @@
-import * as cheerio from 'cheerio';
+import * as cheerio from 'cheerio/slim';
 import type { Element } from 'domhandler';
 import { convertTeamNameToZh } from './utils';
 
