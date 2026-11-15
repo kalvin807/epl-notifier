@@ -1,4 +1,5 @@
-import * as cheerio from 'cheerio';
+import * as cheerio from 'cheerio/slim';
+import type { Element } from 'domhandler';
 import { convertTeamNameToZh } from './utils';
 
 /**
@@ -27,7 +28,7 @@ export class Standing {
 	lostPoint: number;
 	pointDifference: number;
 
-	constructor(selector: cheerio.Element | string) {
+	constructor(selector: Element | string) {
 		const data = cheerio.load(selector)('td');
 		this.standing = Number(data.eq(0).text().trim());
 		this.teamName = data.eq(2).text().trim();

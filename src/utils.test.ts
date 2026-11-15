@@ -33,7 +33,7 @@ describe('parseNonStandardDateTime', () => {
 	beforeAll(() => {
 		// lock date to 2023-10-01T00:00:00.000+09:00
 		vitest
-			.spyOn(global.Date, 'now')
+			.spyOn(globalThis.Date, 'now')
 			.mockImplementation(() => new Date('2023-10-01T00:00:00.000+09:00').valueOf());
 	});
 
@@ -47,6 +47,27 @@ describe('parseNonStandardDateTime', () => {
 			// enforce timezone to Asia/Hong_Kong for testing
 			expect(result?.setZone('Asia/Hong_Kong').toISO()).toBe(expected);
 		});
+	});
+});
+
+describe('parseNonStandardDateTime across the new year', () => {
+	afterAll(() => {
+		vitest.restoreAllMocks();
+	});
+
+	it('puts January fixtures in next year when viewed in late December', () => {
+		vitest.spyOn(globalThis.Date, 'now').mockImplementation(() => new Date('2026-12-28T12:00:00+09:00').valueOf());
+		expect(parseNonStandardDateTime('1/3（土）\n\n24:00')?.toISO()).toBe('2027-01-03T23:00:00.000+08:00');
+	});
+
+	it('puts December results in last year when viewed in early January', () => {
+		vitest.spyOn(globalThis.Date, 'now').mockImplementation(() => new Date('2027-01-02T12:00:00+09:00').valueOf());
+		expect(parseNonStandardDateTime('12/30（水）\n\n21:30')?.toISO()).toBe('2026-12-30T20:30:00.000+08:00');
+	});
+
+	it('rejects malformed input', () => {
+		expect(parseNonStandardDateTime('未定')).toBeNull();
+		expect(parseNonStandardDateTime('11/21（土）\n\n--:--')).toBeNull();
 	});
 });
 

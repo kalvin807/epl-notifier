@@ -1,5 +1,6 @@
 import { DateTime, Duration } from 'luxon';
 import { Schedule } from './schedule';
+import { log } from './log';
 
 const teamJaZhMap = {
 	'ルートンタウン': '盧頓',
@@ -25,6 +26,10 @@ const teamJaZhMap = {
 	'イプスウィッチ': '葉士域G',
 	'サウサンプトン': '修咸頓',
 	'レスター': '李城',
+	'サンダーランド': '新特蘭',
+	'リーズ': '列斯聯',
+	'ハル・C': '侯城',
+	'コベントリー・C': '高雲地利',
 	'ブライトン・アンド・ホーヴ・アルビオン': '白禮頓',
 	'マンチェスター・ユナイテッド': '獌聯',
 	'ニューカッスル・ユナイテッド': '鈕卡素',
@@ -35,65 +40,70 @@ const teamJaZhMap = {
 	'ウェストハム・ユナイテッド': '西咸',
 	'イプスウィッチ・タウン': '葉士域G',
 	'ウルヴァーハンプトン・ワンダラーズ': '狼隊',
+	'リーズ・ユナイテッド': '列斯聯',
+	'ハル・シティ': '侯城',
+	'コベントリー・シティ': '高雲地利',
 } as Record<string, string>;
 
 export const userAgent =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36';
 
-export function convertTeamNameToZh(teamName: string): string {
-	return teamJaZhMap[teamName] || teamName;
+export function isKnownTeam(teamName: string): boolean {
+	return teamName in teamJaZhMap;
 }
 
-export function parseNonStandardDateTime(dateString: string): DateTime | null {
-	// Assume current year
-	const currentYear = DateTime.now().year;
+// Warn once per isolate per name, so a newly promoted team shows up in Workers Logs
+// instead of silently leaking Japanese names into Discord.
+const warnedUnmapped = new Set<string>();
 
-	// Remove leading/trailing white space and split the input string by newline
+export function convertTeamNameToZh(teamName: string): string {
+	const zh = teamJaZhMap[teamName];
+	if (zh) return zh;
+	if (teamName && !warnedUnmapped.has(teamName)) {
+		warnedUnmapped.add(teamName);
+		log('warn', 'unmapped_team', { team: teamName });
+	}
+	return teamName;
+}
+
+const TZ_SOURCE = 'Asia/Tokyo';
+const TZ_OUTPUT = 'Asia/Hong_Kong';
+
+/**
+ * Parse Yahoo's schedule cell, e.g. `11/21（土）\n<br>\n24:30` (JST, hours may exceed 24).
+ * The page omits the year, so pick whichever of last/this/next year lands closest to now;
+ * this keeps late-December pages listing `1/3` and early-January pages listing `12/30` correct.
+ */
+export function parseNonStandardDateTime(dateString: string): DateTime | null {
 	const parts = dateString
 		.split('\n')
 		.map(str => str.trim())
 		.filter(Boolean);
+	if (parts.length !== 2) return null;
 
-	if (parts.length !== 2) {
-		return null;
-	}
+	const dateMatch = /^(\d{1,2})\/(\d{1,2})/.exec(parts[0]!);
+	const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(parts[1]!);
+	if (!dateMatch || !timeMatch) return null;
 
-	const [date, time] = parts;
+	const [month, day, hours, minutes] = [dateMatch[1], dateMatch[2], timeMatch[1], timeMatch[2]].map(Number) as [
+		number,
+		number,
+		number,
+		number,
+	];
 
-	if (!date || !time) {
-		return null;
-	}
+	const now = DateTime.now().setZone(TZ_SOURCE);
+	const candidates = [now.year - 1, now.year, now.year + 1]
+		.map(year =>
+			DateTime.fromObject({ year, month, day }, { zone: TZ_SOURCE }).plus(Duration.fromObject({ hours, minutes }))
+		)
+		.filter(dt => dt.isValid);
+	if (!candidates.length) return null;
 
-	const formattedDate = date.trim().replace(/[^0-9\/]/g, '');
-	const fullDateString = `${currentYear}/${formattedDate}`;
-
-	const timeParts = time.split(':').map(str => Number(str.trim()));
-
-	if (timeParts.length !== 2 || timeParts.some(isNaN)) {
-		return null;
-	}
-
-	const [hours, minutes] = timeParts;
-
-	// it is always in JST
-	let dt = DateTime.fromFormat(fullDateString, 'yyyy/M/d', {
-		zone: 'Asia/Tokyo',
-	});
-
-	// If hours >= 24, add extra days and set the remaining hours
-	if (hours! >= 24) {
-		// Add days to the date for hours >= 24
-		dt = dt.plus(Duration.fromObject({ days: Math.floor(hours! / 24) }));
-		// Calculate the "real" hour within a 24-hour day
-		const realHour = hours! % 24;
-		// Add the real hour and minutes to the DateTime object
-		dt = dt.set({ hour: realHour, minute: minutes });
-	} else {
-		// Add the real hour and minutes to the DateTime object
-		dt = dt.set({ hour: hours, minute: minutes });
-	}
-
-	return dt.setZone('Asia/Hong_Kong');
+	const closest = candidates.reduce((best, dt) =>
+		Math.abs(dt.diff(now).toMillis()) < Math.abs(best.diff(now).toMillis()) ? dt : best
+	);
+	return closest.setZone(TZ_OUTPUT);
 }
 
 /**

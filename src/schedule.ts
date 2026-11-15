@@ -1,13 +1,15 @@
 import { DateTime } from 'luxon';
+import * as cheerio from 'cheerio/slim';
+import type { Element } from 'domhandler';
 import { parseNonStandardDateTime, convertTeamNameToZh } from './utils';
-import * as cheerio from 'cheerio';
 
+/** `"2 - \n 1"` → `"2-1"`; returns null for an unplayed match (`"-"`). */
 export const parseScore = (scoreDetailRaw: string): string | null => {
 	const scoreBreakdown = scoreDetailRaw
 		.split('-')
 		.map(str => str.trim())
 		.filter(str => str !== '');
-	if (!scoreBreakdown || scoreBreakdown.length !== 2) return null;
+	if (scoreBreakdown.length !== 2) return null;
 	return scoreBreakdown.join('-');
 };
 
@@ -27,21 +29,15 @@ export class Schedule {
 	 *     |- sc-tableGame__status
 	 *  アウェイ
 	 */
-	constructor(selector: cheerio.Element | string) {
-		const data = cheerio.load(selector)('td');
-		const dateTimeStr = data.eq(0).text().trim();
-		this.dateTime = parseNonStandardDateTime(dateTimeStr);
-		this.homeTeam = convertTeamNameToZh(data.eq(2).text().trim());
-		this.awayTeam = convertTeamNameToZh(data.eq(4).text().trim());
-		this.score = this.extractStatus(data.eq(3));
+	constructor(row: Element | string) {
+		const cells = cheerio.load(row)('td');
+		this.dateTime = parseNonStandardDateTime(cells.eq(0).text().trim());
+		this.homeTeam = convertTeamNameToZh(cells.eq(2).text().trim());
+		this.awayTeam = convertTeamNameToZh(cells.eq(4).text().trim());
+		this.score = parseScore(cells.eq(3).find('p.sc-tableGame__scoreDetail').text().trim());
 	}
 
-	private extractStatus(data: cheerio.Cheerio<cheerio.Element>): string | null {
-		const scoreDetailRaw = data.find('p.sc-tableGame__scoreDetail').text().trim();
-		const score = parseScore(scoreDetailRaw);
-		return score;
-	}
-
+	/** Shape served by `/schedule`; keep stable for API consumers. */
 	toJson(): Record<string, string | number | null | undefined> {
 		return {
 			homeTeam: this.homeTeam,
@@ -52,12 +48,7 @@ export class Schedule {
 	}
 
 	/** internal use */
-	setFields(
-		homeTeam: string,
-		awayTeam: string,
-		dateTime: DateTime,
-		score: string | null
-	): Schedule {
+	setFields(homeTeam: string, awayTeam: string, dateTime: DateTime, score: string | null): Schedule {
 		this.homeTeam = homeTeam;
 		this.awayTeam = awayTeam;
 		this.dateTime = dateTime;
@@ -65,17 +56,3 @@ export class Schedule {
 		return this;
 	}
 }
-
-export const buildSchedulesAsDiscordEmbed = (schedules: Schedule[]): Record<string, unknown>[] => {
-	const payload = schedules.map(s => {
-		const { homeTeam, awayTeam, dateTime, score } = s;
-		if (!dateTime) return null;
-		return {
-			name: `${convertTeamNameToZh(homeTeam)} vs ${convertTeamNameToZh(awayTeam)}`,
-			value: score ? score : dateTime.toFormat('MM/dd HH:mm'),
-			inline: false,
-		};
-	});
-
-	return payload.filter((o): o is Exclude<typeof o, null> => o !== null);
-};

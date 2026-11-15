@@ -20,7 +20,7 @@
 		"module": "esnext",
 		"target": "esnext",
 		"lib": ["esnext", "DOM"],
-		"moduleResolution": "node",
+		"moduleResolution": "bundler",
 		"types": ["@cloudflare/workers-types"]
 	},
 	"exclude": ["node_modules", "dist", "test"]
