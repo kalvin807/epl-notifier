@@ -1,9 +1,21 @@
 name = "epl-discord-bot"
 main = "./src/index.ts"
-compatibility_date = "2022-05-03"
+compatibility_date = "2026-11-01"
+# Readable stack traces in Workers Logs instead of minified bundle positions.
+upload_source_maps = true
 
 [triggers]
 crons = ["*/30 * * * *"]
 
 [vars]
 NEXT_MATCH_BUFFER_MINUTES = "30"
+
+# Workers Logs: keeps console output and per-invocation logs (including cron runs)
+# queryable in the Cloudflare dashboard. Traffic is ~48 cron runs/day, so sample everything.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+head_sampling_rate = 1
