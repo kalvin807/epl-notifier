@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
 import { parseNonStandardDateTime, convertTeamNameToZh } from './utils';
 import * as cheerio from 'cheerio';
+import type { Element } from 'domhandler';
 
 export const parseScore = (scoreDetailRaw: string): string | null => {
 	const scoreBreakdown = scoreDetailRaw
@@ -27,7 +28,7 @@ export class Schedule {
 	 *     |- sc-tableGame__status
 	 *  アウェイ
 	 */
-	constructor(selector: cheerio.Element | string) {
+	constructor(selector: Element | string) {
 		const data = cheerio.load(selector)('td');
 		const dateTimeStr = data.eq(0).text().trim();
 		this.dateTime = parseNonStandardDateTime(dateTimeStr);
@@ -36,7 +37,7 @@ export class Schedule {
 		this.score = this.extractStatus(data.eq(3));
 	}
 
-	private extractStatus(data: cheerio.Cheerio<cheerio.Element>): string | null {
+	private extractStatus(data: cheerio.Cheerio<Element>): string | null {
 		const scoreDetailRaw = data.find('p.sc-tableGame__scoreDetail').text().trim();
 		const score = parseScore(scoreDetailRaw);
 		return score;
